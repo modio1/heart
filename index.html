@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Butterfly Heart – Forever Yours</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: radial-gradient(circle at center, #2a0a2e 0%, #05020a 100%);
+    overflow: hidden;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas#stage {
+    display: block;
+    width: min(100vw, 100vh);
+    height: min(100vw, 100vh);
+    filter: saturate(1.05);
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage" width="800" height="800"></canvas>
+  <script>
+  (() => {
+    "use strict";
+
+    // ---------- constants ----------
+    const W = 800, H = 800;
+    const CX = W / 2, CY = H / 2 - 10;
+    const TAU = Math.PI * 2;
+
+    const HOT        = [255,  55, 135];
+    const SOFT       = [255, 145, 200];
+    const GOLD       = [255, 205, 120];
+    const VIOLET     = [190,  90, 255];
+    const WHITE_PINK = [255, 228, 238];
+
+    const GLOW_DIV = 5;
+    const SW = Math.floor(W / GLOW_DIV);
+    const SH = Math.floor(H / GLOW_DIV);
+
+    // ---------- canvases ----------
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d");
+
+    const layer = document.createElement("canvas");
+    layer.width = W; layer.height = H;
+    const lctx = layer.getContext("2d");
+
+    const small = document.createElement("canvas");
+    small.width = SW; small.height = SH;
+    const smctx = small.getContext("2d");
+
+    const glow = document.createElement("canvas");
+    glow.width = W; glow.height = H;
+    const gctx = glow.getContext("2d");
+
+    // ---------- shapes ----------
+    function heartPoint(t) {
+      const x = 16 * Math.pow(Math.sin(t), 3);
+      const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t)
+                - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      return [x, y];
+    }
+
+    function bfRaw(t) {
+      const r = Math.exp(Math.cos(t))
+              - 2 * Math.cos(4 * t)
+              - Math.pow(Math.sin(t / 12), 5);
+      return [Math.sin(t) * r, -Math.cos(t) * r];
+    }
+
+    // pre-scale so butterfly matches heart width
+    const rawSamples = [];
+    for (let i = 0; i <= 2000; i++) rawSamples.push(bfRaw(i / 2000 * 12 * Math.PI));
+
+    let maxAbsX = 0;
+    for (const p of rawSamples) maxAbsX = Math.max(maxAbsX, Math.abs(p[0]));
+    const BF_S = 16.0 / maxAbsX;
+
+    let minY = Infinity, maxY = -Infinity;
+    for (const p of rawSamples) {
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    const BF_DY = 2.5 - ((minY + maxY) / 2) * BF_S;
+
+    // arc-length reparametrization
+    const M = 1200;
+    const cum = [0];
+    for (let i = 1; i <= 6000; i++) {
+      const a = bfRaw((i - 1) / 6000 * 12 * Math.PI);
+      const b = bfRaw(i / 6000 * 12 * Math.PI);
+      cum.push(cum[cum.length - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+    }
+    const BF_T = [];
+    let j = 0;
+    const totalLen = cum[cum.length - 1];
+    for (let k = 0; k < M; k++) {
+      const target = totalLen * k / M;
+      while (cum[j] < target) j++;
+      BF_T.push(j / 6000 * 12 * Math.PI);
+    }
+
+    function butterflyPoint(u) {
+      const idx = Math.floor(u * M) % M;
+      const [x, y] = bfRaw(BF_T[idx]);
+      return [x * BF_S, y * BF_S + BF_DY];
+    }
+
+    function ringN(scale) {
+      return Math.floor(Math.min(24 + scale * 8, 200));
+    }
+
+    function smooth(t) { return t * t * (3 - 2 * t); }
+
+    // ---------- drawing ----------
+    function drawButterfly(c, x, y, size, ticks, phase, color, angle) {
+      const flap = 0.25 + 0.75 * Math.abs(Math.sin(ticks * 0.18 + phase));
+      const S = size;
+
+      c.save();
+      c.translate(x, y);
+      c.rotate(angle);
+
+      // wings: smooth curved upper + lower lobes, mirrored
+      c.fillStyle = color;
+      c.beginPath();
+      for (const side of [-1, 1]) {
+        const X = S * flap * side;
+        // upper wing
+        c.moveTo(0, -S * 0.05);
+        c.bezierCurveTo(X * 0.30, -S * 0.95, X * 1.05, -S * 1.30, X * 1.20, -S * 0.70);
+        c.bezierCurveTo(X * 1.28, -S * 0.25, X * 0.60, -S * 0.02, 0, S * 0.05);
+        // lower wing
+        c.moveTo(0, S * 0.05);
+        c.bezierCurveTo(X * 0.85, S * 0.05, X * 1.00, S * 0.65, X * 0.62, S * 0.95);
+        c.bezierCurveTo(X * 0.30, S * 1.10, X * 0.05, S * 0.55, 0, S * 0.05);
+      }
+      c.fill();
+
+      // soft inner highlight on the upper wings
+      if (S >= 6) {
+        c.globalAlpha = 0.35;
+        c.fillStyle = `rgb(${WHITE_PINK[0]},${WHITE_PINK[1]},${WHITE_PINK[2]})`;
+        c.beginPath();
+        for (const side of [-1, 1]) {
+          const X = S * flap * side;
+          c.moveTo(X * 0.15, -S * 0.15);
+          c.bezierCurveTo(X * 0.35, -S * 0.65, X * 0.70, -S * 0.85, X * 0.80, -S * 0.55);
+          c.bezierCurveTo(X * 0.85, -S * 0.30, X * 0.45, -S * 0.12, X * 0.15, -S * 0.15);
+        }
+        c.fill();
+        c.globalAlpha = 1;
+      }
+
+      // body
+      c.fillStyle = `rgb(${WHITE_PINK[0]},${WHITE_PINK[1]},${WHITE_PINK[2]})`;
+      c.beginPath();
+      c.ellipse(0, 0, Math.max(0.6, S * 0.07), S * 0.42, 0, 0, TAU);
+      c.fill();
+
+      // antennae (only when big enough to read)
+      if (S >= 8) {
+        c.strokeStyle = c.fillStyle;
+        c.lineWidth = Math.max(0.8, S * 0.04);
+        c.lineCap = "round";
+        c.beginPath();
+        c.moveTo(0, -S * 0.38);
+        c.quadraticCurveTo(-S * 0.10, -S * 0.75, -S * 0.28, -S * 0.88);
+        c.moveTo(0, -S * 0.38);
+        c.quadraticCurveTo( S * 0.10, -S * 0.75,  S * 0.28, -S * 0.88);
+        c.stroke();
+      }
+
+      c.restore();
+    }
+
+    function ringColor(i, scale, fade) {
+      const b = i % 7 === 0 ? GOLD : (i % 3 === 0 ? SOFT : HOT);
+      const t = Math.min(scale / 70, 1) * 0.55;   // outer rings drift toward violet
+      const r = (b[0] + (VIOLET[0] - b[0]) * t) * fade;
+      const g = (b[1] + (VIOLET[1] - b[1]) * t) * fade;
+      const bl = (b[2] + (VIOLET[2] - b[2]) * t) * fade;
+      return `rgb(${r | 0},${g | 0},${bl | 0})`;
+    }
+
+    function drawRing(c, scale, progress, ticks, spin,
+                      fadeMul = 1, n = null, morph = 0, xscale = 1) {
+      if (n === null || n === undefined) n = ringN(scale);
+      const count = Math.floor(n * progress);
+      if (scale <= 0 || count <= 0 || fadeMul <= 0) return;
+
+      const fade = Math.max(0.15, 1 - Math.min(scale, 150) / 165) * fadeMul;
+      const size = Math.max(2, Math.min(13, 2 + scale * 0.22));
+      const cs = Math.cos(spin), sn = Math.sin(spin);
+
+      for (let i = 0; i < count; i++) {
+        const u = i / n;
+        let [bx, by] = heartPoint(u * TAU);
+
+        if (morph > 0) {
+          const [mx, my] = butterflyPoint(u);
+          bx += (mx - bx) * morph;
+          by += (my - by) * morph;
+        }
+
+        bx *= xscale;
+        const rbx = bx * cs - by * sn;
+        const rby = bx * sn + by * cs;
+        const x = CX + rbx * scale;
+        const y = CY + rby * scale;
+
+        const col = ringColor(i, scale, fade);
+
+        const angle = Math.sin(ticks * 0.02 + i) * 0.4;
+        drawButterfly(c, x, y, size, ticks, i * 0.35, col, angle);
+      }
+    }
+
+    // ---------- particles ----------
+    function newParticle(anywhere = true) {
+      const sizes = [5, 6, 7, 8, 9, 10, 28, 36, 44];
+      return {
+        x: Math.random() * W,
+        y: anywhere ? Math.random() * H : H + 40,
+        vx: Math.random() * 1.0 - 0.5,
+        vy: -0.3 - Math.random() * 0.8,
+        s: sizes[Math.floor(Math.random() * sizes.length)],
+        p: Math.random() * 6.28,
+      };
+    }
+
+    const particles = [];
+    for (let i = 0; i < 34; i++) particles.push(newParticle());
+
+    function drawParticles(c, ticks) {
+      for (const p of particles) {
+        p.x += p.vx + Math.sin(ticks * 0.03 + p.p) * 0.5;
+        p.y += p.vy;
+        if (p.y < -60) Object.assign(p, newParticle(false));
+
+        let color = p.s < 20 ? SOFT : HOT;
+        const f = p.s >= 20 ? 0.7 : 1;
+        const col = `rgb(${(color[0] * f) | 0},${(color[1] * f) | 0},${(color[2] * f) | 0})`;
+        drawButterfly(c, p.x, p.y, p.s, ticks, p.p, col, 0);
+      }
+    }
+
+    // ---------- petals ----------
+    function newPetal(anywhere) {
+      return { x: Math.random() * W, y: anywhere ? Math.random() * H : -30,
+               vy: 0.5 + Math.random() * 0.9, s: 5 + Math.random() * 7,
+               rot: Math.random() * TAU, vr: (Math.random() - 0.5) * 0.05,
+               ph: Math.random() * TAU, c: Math.random() < 0.5 ? [255, 70, 120] : [255, 125, 165] };
+    }
+    const petals = [];
+    for (let i = 0; i < 26; i++) petals.push(newPetal(true));
+
+    function drawPetals(c, ticks) {
+      for (const p of petals) {
+        p.x += Math.sin(ticks * 0.015 + p.ph) * 0.8;
+        p.y += p.vy; p.rot += p.vr;
+        if (p.y > H + 30) Object.assign(p, newPetal(false));
+        const s = p.s, tumble = Math.cos(ticks * 0.03 + p.ph);
+        c.save();
+        c.translate(p.x, p.y); c.rotate(p.rot); c.scale(tumble, 1);
+        c.fillStyle = `rgb(${p.c[0] * 0.8 | 0},${p.c[1] * 0.8 | 0},${p.c[2] * 0.8 | 0})`;
+        c.beginPath();
+        c.moveTo(0, -s);
+        c.bezierCurveTo(s * 0.9, -s * 0.6, s * 0.8, s * 0.6, 0, s);
+        c.bezierCurveTo(-s * 0.8, s * 0.6, -s * 0.9, -s * 0.6, 0, -s);
+        c.fill();
+        c.restore();
+      }
+    }
+
+    // ---------- sparkles & floating hearts ----------
+    const sparks = [];
+    function addSpark(x, y, vx, vy, life, type, size, col) {
+      if (sparks.length < 450) sparks.push({ x, y, vx, vy, life, max: life, type, size, col });
+    }
+    function burst(x, y, n) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * TAU, sp = 1 + Math.random() * 3.5, r = Math.random();
+        addSpark(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 50 + (Math.random() * 40 | 0),
+                 Math.random() < 0.35 ? 1 : 0, 3 + Math.random() * 6,
+                 r < 0.3 ? GOLD : r < 0.6 ? SOFT : WHITE_PINK);
+      }
+    }
+    function drawSparks(c) {
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.x += s.vx; s.y += s.vy; s.vx *= 0.985; s.vy = s.vy * 0.985 - 0.012;
+        if (--s.life <= 0) { sparks[i] = sparks[sparks.length - 1]; sparks.pop(); continue; }
+        const a = s.life / s.max;
+        c.fillStyle = `rgb(${s.col[0] * a | 0},${s.col[1] * a | 0},${s.col[2] * a | 0})`;
+        const r = s.size * (0.5 + 0.5 * a);
+        c.beginPath();
+        if (s.type === 0) {            // four-point glint
+          c.moveTo(s.x, s.y - r);
+          c.quadraticCurveTo(s.x, s.y, s.x + r, s.y);
+          c.quadraticCurveTo(s.x, s.y, s.x, s.y + r);
+          c.quadraticCurveTo(s.x, s.y, s.x - r, s.y);
+          c.quadraticCurveTo(s.x, s.y, s.x, s.y - r);
+        } else {                       // tiny heart
+          const h = r * 0.8;
+          c.moveTo(s.x, s.y + h * 0.9);
+          c.bezierCurveTo(s.x - h * 1.6, s.y - h * 0.1, s.x - h * 0.7, s.y - h * 1.2, s.x, s.y - h * 0.4);
+          c.bezierCurveTo(s.x + h * 0.7, s.y - h * 1.2, s.x + h * 1.6, s.y - h * 0.1, s.x, s.y + h * 0.9);
+        }
+        c.fill();
+      }
+    }
+
+    // ---------- caption & aura ----------
+    let show = 0, beat = 0;
+    function drawCaption(c) {
+      if (show <= 0.02) return;
+      c.save();
+      c.globalAlpha = Math.min(1, show);
+      c.translate(CX, CY + 22); c.scale(1 + 0.03 * beat, 1 + 0.03 * beat);
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.shadowColor = "rgb(255,60,140)"; c.shadowBlur = 20;
+      c.fillStyle = "rgb(255,228,238)";
+      c.font = "italic 600 58px Georgia, 'Times New Roman', serif";
+      c.fillText("Forever Yours", 0, 0);
+      c.fillStyle = "rgb(255,205,120)";
+      c.font = "30px Georgia, serif";
+      c.fillText("\u2665", 0, 58);
+      c.restore();
+    }
+    function drawAura(c, pulse) {
+      if (show <= 0.01) return;
+      const g = c.createRadialGradient(CX, CY, 10, CX, CY, 360 * pulse);
+      g.addColorStop(0, `rgba(255,70,150,${0.30 * show})`);
+      g.addColorStop(0.6, `rgba(190,60,200,${0.12 * show})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      c.save();
+      c.globalCompositeOperation = "destination-over";
+      c.fillStyle = g; c.fillRect(0, 0, W, H);
+      c.restore();
+    }
+
+    // ---------- ambient background ----------
+    const stars = [];
+    for (let i = 0; i < 90; i++) stars.push({ x: Math.random() * W, y: Math.random() * H,
+                                              r: Math.random() * 1.6 + 0.4, ph: Math.random() * TAU });
+    const bokeh = [];
+    for (let i = 0; i < 12; i++) bokeh.push({ x: Math.random() * W, y: Math.random() * H,
+        r: 30 + Math.random() * 60, vx: (Math.random() - 0.5) * 0.15, vy: -0.05 - Math.random() * 0.15,
+        c: Math.random() < 0.5 ? [255, 90, 160] : [200, 110, 255] });
+    const bgGrad = ctx.createRadialGradient(CX, CY, 40, CX, CY, 620);
+    bgGrad.addColorStop(0, "#2a0a2e"); bgGrad.addColorStop(0.5, "#14061f"); bgGrad.addColorStop(1, "#05020a");
+
+    canvas.addEventListener("pointerdown", e => {
+      const r = canvas.getBoundingClientRect();
+      burst((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H, 28);
+    });
+
+    // ---------- state ----------
+    const targetScales = [2, 4, 6.5, 9.5, 13, 17, 21];
+    const growthRate = 1.018;
+    const TUNNEL_MIN_TICKS = 420;
+    const MORPH_TICKS = 150;
+    const HOLD_TICKS = 200;
+    const FADE_TICKS = 70;
+    const FINAL_SCALE = 21;
+
+    let mode, activeRings, buildIdx, traceProgress, timer;
+    let others = [];
+    let morphScale = FINAL_SCALE;
+    let ticks = 0;
+
+    function resetCycle() {
+      mode = "BUILD";
+      activeRings = [];
+      buildIdx = 0;
+      traceProgress = 0;
+      timer = 0;
+    }
+    resetCycle();
+
+    // ---------- update (60 Hz logic) ----------
+    function update() {
+      ticks++;
+      const bp = (ticks % 70) / 70;                       // lub-dub heartbeat
+      beat = Math.exp(-Math.pow((bp - 0.08) / 0.05, 2)) + 0.6 * Math.exp(-Math.pow((bp - 0.28) / 0.06, 2));
+      const pulse = 1 + 0.04 * beat + 0.008 * Math.sin(ticks * 0.03);
+      show = 0;
+      const spin = Math.sin(ticks * 0.012) * 0.12;
+
+      lctx.globalCompositeOperation = "source-over";
+      lctx.clearRect(0, 0, W, H);
+
+      if (mode === "BUILD") {
+        for (const r of activeRings) drawRing(lctx, r * pulse, 1, ticks, spin);
+
+        if (buildIdx < targetScales.length) {
+          const cs = targetScales[buildIdx];
+          traceProgress += 0.0133;
+          drawRing(lctx, cs * pulse, traceProgress, ticks, spin);
+          if (traceProgress >= 1) {
+            activeRings.push(cs);
+            buildIdx++;
+            traceProgress = 0;
+          }
+        } else {
+          mode = "TUNNEL";
+          timer = 0;
+        }
+
+      } else if (mode === "TUNNEL") {
+        timer++;
+        for (let i = 0; i < activeRings.length; i++) {
+          activeRings[i] *= growthRate;
+          if (activeRings[i] > 150) activeRings[i] = 0.05;
+          drawRing(lctx, activeRings[i] * pulse, 1, ticks, spin, 1, 45);
+        }
+        if (timer > TUNNEL_MIN_TICKS) {
+          for (let i = 0; i < activeRings.length; i++) {
+            const r = activeRings[i];
+            if (r >= 18 && r <= 24) {
+              morphScale = r;
+              others = activeRings.filter((_, k) => k !== i);
+              mode = "MORPH";
+              timer = 0;
+              break;
+            }
+          }
+        }
+
+      } else if (mode === "MORPH") {
+        timer++;
+        const e = smooth(Math.min(1, timer / MORPH_TICKS));
+        morphScale += (FINAL_SCALE - morphScale) * 0.05;
+        show = e * 0.4;
+        const f = Math.max(0, 1 - timer / 60);
+
+        for (const r of others) drawRing(lctx, r * pulse, 1, ticks, spin, f, 45);
+
+        drawRing(lctx, morphScale * pulse, 1, ticks, spin, 1,
+                 Math.floor(45 + 215 * e), e);
+
+        if (timer >= MORPH_TICKS) { mode = "HOLD"; timer = 0; burst(CX, CY, 80); }
+
+      } else if (mode === "HOLD") {
+        timer++;
+        const wing = 0.8 + 0.2 * Math.sin(ticks * 0.09);
+        show = Math.min(1, timer / 50);
+        if (ticks % 2 === 0) {
+          const [hx, hy] = heartPoint(Math.random() * TAU);
+          addSpark(CX + hx * morphScale * pulse, CY + hy * morphScale * pulse,
+                   (Math.random() - 0.5) * 0.6, -0.3 - Math.random() * 0.5, 60,
+                   Math.random() < 0.25 ? 1 : 0, 3 + Math.random() * 4,
+                   Math.random() < 0.5 ? GOLD : WHITE_PINK);
+        }
+        drawRing(lctx, morphScale * pulse, 1, ticks, spin * 0.3, 1, 260, 1, wing);
+        if (timer >= HOLD_TICKS) { mode = "FADE"; timer = 0; }
+
+      } else if (mode === "FADE") {
+        timer++;
+        const f = Math.max(0, 1 - timer / FADE_TICKS);
+        show = f;
+        drawRing(lctx, morphScale * pulse * (1 + 0.15 * (1 - f)), 1, ticks,
+                 spin * 0.3, f, 260, 1);
+        if (timer >= FADE_TICKS) resetCycle();
+      }
+
+      drawParticles(lctx, ticks);
+      drawPetals(lctx, ticks);
+      drawSparks(lctx);
+      drawCaption(lctx);
+      drawAura(lctx, pulse);
+    }
+
+    // ---------- render (glow composite) ----------
+    function render() {
+      // 1) clear screen
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, W, H);
+      for (const s of stars) {
+        ctx.fillStyle = `rgba(255,230,240,${0.2 + 0.35 * Math.sin(ticks * 0.03 + s.ph)})`;
+        ctx.fillRect(s.x, s.y, s.r, s.r);
+      }
+      ctx.globalCompositeOperation = "lighter";
+      for (const b of bokeh) {
+        b.x += b.vx; b.y += b.vy;
+        if (b.y < -b.r) { b.y = H + b.r; b.x = Math.random() * W; }
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+        g.addColorStop(0, `rgba(${b.c[0]},${b.c[1]},${b.c[2]},0.10)`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+      }
+      ctx.globalCompositeOperation = "source-over";
+
+      // 2) downscale layer -> small
+      smctx.globalCompositeOperation = "source-over";
+      smctx.clearRect(0, 0, SW, SH);
+      smctx.drawImage(layer, 0, 0, SW, SH);
+
+      // 3) upscale small -> glow
+      gctx.globalCompositeOperation = "source-over";
+      gctx.clearRect(0, 0, W, H);
+      gctx.drawImage(small, 0, 0, W, H);
+
+      // 4) additive composite
+      ctx.globalCompositeOperation = "lighter";
+      ctx.drawImage(glow, 0, 0);
+      ctx.drawImage(glow, 0, 0);
+      ctx.drawImage(layer, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    // ---------- main loop (fixed 60Hz step) ----------
+    let lastTime = 0, accumulator = 0;
+    const STEP = 1000 / 60;
+
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!lastTime) lastTime = now;
+
+      const delta = now - lastTime;
+      lastTime = now;
+      accumulator += Math.min(delta, 200);
+
+      while (accumulator >= STEP) {
+        update();
+        accumulator -= STEP;
+      }
+      render();
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>
